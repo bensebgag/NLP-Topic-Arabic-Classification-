@@ -21,7 +21,7 @@ def load_dataset():
         
         for file_path in txt_files:
             try:
-                content = file_path.read_text(encoding='utf-8', errors='replace')
+                content = file_path.read_text(encoding='utf-8', errors='strict')
                 if content and content.strip():
                     all_texts.append(content.strip())
                     all_labels.append(class_name)
@@ -41,4 +41,4 @@ def load_dataset():
 
 if __name__ == "__main__":
     df = load_dataset()
-    print(df.head(5))
+    
