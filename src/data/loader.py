@@ -39,6 +39,5 @@ def load_dataset():
     print(f"\nTotal articles loaded: {len(df)}")
     return df
 
-if __name__ == "__main__":
-    df = load_dataset()
-    
+df = load_dataset()
+print(df.head(2))
