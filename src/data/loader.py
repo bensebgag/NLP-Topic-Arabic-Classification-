@@ -38,6 +38,3 @@ def load_dataset():
     
     print(f"\nTotal articles loaded: {len(df)}")
     return df
-
-df = load_dataset()
-print(df.head(2))
