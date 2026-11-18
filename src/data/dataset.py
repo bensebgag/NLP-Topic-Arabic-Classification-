@@ -1,68 +1,51 @@
+"""Torch Dataset and DataLoader factory for the frozen splits."""
+
+import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+import torch
+from torch.utils.data import DataLoader, Dataset
 
-from src.config import RANDOM_SEED, PROCESSED_DIR
-
-
-def deduplicate(df: pd.DataFrame) -> pd.DataFrame:
-    n_labels_per_clean = df.groupby("clean")["label"].nunique()
-    assert (n_labels_per_clean <= 1).all(), "duplicate articles with conflicting labels"
-    before = len(df)
-    df = df.drop_duplicates(subset="clean", keep="first").reset_index(drop=True)
-    print(f"de-duplication: {before} -> {len(df)} rows ({before - len(df)} extra copies removed)")
-    return df
+from src.config import LABEL2ID, MAX_LEN, PROCESSED_DIR, RANDOM_SEED
+from src.data.vocabulary import Vocabulary
 
 
-def split_dataset(df: pd.DataFrame, random_state: int = RANDOM_SEED):
-    train_df, rest_df = train_test_split(
-        df, test_size=0.30, stratify=df["label"], random_state=random_state
-    )
-    validation_df, test_df = train_test_split(
-        rest_df, test_size=0.50, stratify=rest_df["label"], random_state=random_state
-    )
-    return train_df, validation_df, test_df
+class ArabicTextDataset(Dataset):
+    """One item = (ids[max_len], length, label) as int64 tensors; ids encoded once in __init__."""
+
+    def __init__(self, df: pd.DataFrame, vocab: Vocabulary, max_len: int = MAX_LEN):
+        self.max_len = max_len
+        self.pad_id = vocab.pad_id
+        self.ids = [np.array(vocab.encode(text.split())[:max_len], dtype=np.int64)
+                    for text in df["clean"].fillna("")]
+        self.labels = [LABEL2ID[label] for label in df["label"]]
+
+    def __len__(self) -> int:
+        return len(self.ids)
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        ids = self.ids[idx]
+        length = max(len(ids), 1)
+        padded = np.full(self.max_len, self.pad_id, dtype=np.int64)
+        padded[: len(ids)] = ids
+        return (
+            torch.from_numpy(padded),
+            torch.tensor(length, dtype=torch.long),
+            torch.tensor(self.labels[idx], dtype=torch.long),
+        )
 
 
-if __name__ == "__main__":
-    from src.data.loader import load_dataset
-    from src.data.preprocessing import clean_arabic_text
-
-    df = load_dataset()
-    df["clean"] = df["text"].apply(clean_arabic_text)
-    df = deduplicate(df)
-
-    train_df, val_df, test_df = split_dataset(df)
-
-    print("\n=== check 1: sizes and per-class counts ===")
-    counts = pd.DataFrame({
-        "train": train_df["label"].value_counts(),
-        "validation": val_df["label"].value_counts(),
-        "test": test_df["label"].value_counts(),
-    })
-    print(counts)
-    print(f"totals: train={len(train_df)}, validation={len(val_df)}, test={len(test_df)}")
-
-    print("\n=== check 2: no overlap between splits ===")
-    for name, a, b in [("train/val", train_df, val_df),
-                       ("train/test", train_df, test_df),
-                       ("val/test", val_df, test_df)]:
-        print(f"overlap {name}: {len(set(a['clean']) & set(b['clean']))}")
-
-    print("\n=== check 3: reproducibility (split twice, same seed) ===")
-    train2, val2, test2 = split_dataset(df)
-    same = (train_df.index.equals(train2.index)
-            and val_df.index.equals(val2.index)
-            and test_df.index.equals(test2.index))
-    print(f"identical indices on second run: {same}")
-
-    print("\n=== one train article: raw vs clean (first 200 chars) ===")
-    row = train_df.iloc[0]
-    print("RAW  :", row["text"][:200].replace("\n", " "))
-    print("CLEAN:", row["clean"][:200])
-
-    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-    train_df.to_csv(PROCESSED_DIR / "train.csv", index=False)
-    val_df.to_csv(PROCESSED_DIR / "val.csv", index=False)
-    test_df.to_csv(PROCESSED_DIR / "test.csv", index=False)
-    print(f"\nsaved: {PROCESSED_DIR}/train.csv, val.csv, test.csv")
-    print("NOTE: test.csv stays untouched until the final evaluation.")
+def make_loaders(batch_size: int = 64, seed: int = RANDOM_SEED,
+                 max_len: int = MAX_LEN) -> dict[str, DataLoader]:
+    """One DataLoader per split; shuffle train only, with a seeded generator."""
+    vocab = Vocabulary.load(PROCESSED_DIR / "vocab.json")
+    loaders = {}
+    for name in ["train", "val", "test"]:
+        df = pd.read_csv(PROCESSED_DIR / f"{name}.csv")
+        ds = ArabicTextDataset(df, vocab, max_len)
+        loaders[name] = DataLoader(
+            ds,
+            batch_size=batch_size,
+            shuffle=(name == "train"),
+            generator=torch.Generater().manual_seed(seed) if name == "train" else None,
+        )
+    return loaders

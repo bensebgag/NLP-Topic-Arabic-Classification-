@@ -1,13 +1,4 @@
 import re , unicodedata
-import sys
-from pathlib import Path
-import pandas as pd
-
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-
-from src.data.loader import load_dataset 
-
-df = load_dataset()  
 
 
 _CONTROL = re.compile(r"[\u00ad\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
@@ -50,3 +41,6 @@ def clean_arabic_text(text) -> str:
     text = _LONE_DOT.sub(" ", text)
  
     return _SPACES.sub(" ", text).strip()
+
+def preprocess(text) -> list[str]:
+    return clean_arabic_text(text).split()
